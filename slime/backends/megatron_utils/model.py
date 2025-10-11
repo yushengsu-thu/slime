@@ -475,11 +475,11 @@ def train(rollout_id, model, optimizer, opt_param_scheduler, data_iterator, num_
                 tb = _TensorboardAdapter(args)
                 tb.log(data=log_dict, step=accumulated_step_id)
 
-            if args.ci_test:
+            if args.ci_test and not args.ci_disable_kl_checker:
                 if step_id == 0 and "train/ppo_kl" in log_dict and "train/pg_clipfrac" in log_dict:
-                    assert log_dict["train/ppo_kl"] == 0.0 and log_dict["train/pg_clipfrac"] == 0.0
+                    assert log_dict["train/ppo_kl"] == 0.0 and log_dict["train/pg_clipfrac"] == 0.0, f"{log_dict=}"
                 if accumulated_step_id == 0 and "train/kl_loss" in log_dict:
-                    assert log_dict["train/kl_loss"] == 0.0
+                    assert log_dict["train/kl_loss"] == 0.0, f"{log_dict=}"
 
             print(f"{role_tag}step {accumulated_step_id}: {log_dict}")
     # Close out pre-hooks if using distributed optimizer and overlapped param gather.
