@@ -12,8 +12,10 @@ from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from slime.backends.sglang_utils.sglang_engine import SGLangEngine
 from slime.ray.rollout_data_source import RolloutDataSourceWithBuffer
+from slime.rollout.base_types import call_rollout_fn
 from slime.utils.health_monitor import RolloutHealthMonitor
 from slime.utils.http_utils import find_available_port, get_host_info, init_http_client
+from slime.utils.iter_utils import group_by
 from slime.utils.metric_checker import MetricChecker
 from slime.utils.misc import load_function
 from slime.utils.ray_utils import Box
@@ -58,16 +60,21 @@ class RolloutManager:
             self.all_rollout_engines = [None] * num_engines
         self.num_new_engines = init_rollout_engines(args, pg, self.all_rollout_engines)
         self.nodes_per_engine = max(1, args.rollout_num_gpus_per_engine // args.num_gpus_per_node)
-        # when doing multi-node serving, we will only send request to node-0 for each engine.
-        self.rollout_engines = self.all_rollout_engines[:: self.nodes_per_engine]
         self.rollout_engine_lock = Lock.options(num_cpus=1, num_gpus=0).remote()
 
         self._metric_checker = MetricChecker.maybe_create(args)
-        self._health_monitor = RolloutHealthMonitor(self, args)
+        if self.args.use_fault_tolerance:
+            self._health_monitor = RolloutHealthMonitor(self, args)
 
     def dispose(self):
         if self._metric_checker is not None:
             self._metric_checker.dispose()
+
+    # TODO maybe rename "rollout_engines" and "all_rollout_engines" later
+    @property
+    def rollout_engines(self):
+        # when doing multi-node serving, we will only send request to node-0 for each engine.
+        return self.all_rollout_engines[:: self.nodes_per_engine]
 
     def get_rollout_engines_and_lock(self):
         return self.rollout_engines, self.rollout_engine_lock, self.num_new_engines
@@ -77,26 +84,27 @@ class RolloutManager:
         return len(self.data_source.dataset) // self.args.rollout_batch_size
 
     def generate(self, rollout_id):
-        monitor_started = self._health_monitor.start()
+        monitor_started = self.args.use_fault_tolerance and self._health_monitor.start()
         start_time = time.time()
         try:
-            data = self._get_rollout_data(rollout_id=rollout_id)
+            data, metrics = self._get_rollout_data(rollout_id=rollout_id)
             self._save_debug_rollout_data(data, rollout_id=rollout_id)
-            _log_rollout_data(rollout_id, self.args, data, time.time() - start_time)
+            _log_rollout_data(rollout_id, self.args, data, metrics, time.time() - start_time)
             data = self._convert_samples_to_train_data(data)
             return Box(ray.put(data))
         finally:
             if monitor_started:
                 self._health_monitor.stop()
                 self.num_new_engines = init_rollout_engines(self.args, self.pg, self.all_rollout_engines)
-                self.rollout_engines = self.all_rollout_engines[:: self.nodes_per_engine]
 
     def eval(self, rollout_id):
         if self.args.debug_train_only:
             # if debug train only, we don't generate evaluation data
             return
         # TODO: add fault tolerance to eval
-        data = self.eval_generate_rollout(self.args, rollout_id, self.data_source, evaluation=True)
+        data = call_rollout_fn(
+            self.eval_generate_rollout, self.args, rollout_id, self.data_source, evaluation=True
+        ).data
         metrics = _log_eval_rollout_data(rollout_id, self.args, data)
         if self._metric_checker is not None:
             self._metric_checker.on_eval(metrics)
@@ -119,8 +127,11 @@ class RolloutManager:
                 open(self.args.load_debug_rollout_data.format(rollout_id=rollout_id), "rb"),
             )["samples"]
             data = [Sample.from_dict(sample) for sample in data]
+            metrics = None
         else:
-            data = self.generate_rollout(self.args, rollout_id, self.data_source, evaluation=False)
+            data = call_rollout_fn(self.generate_rollout, self.args, rollout_id, self.data_source, evaluation=False)
+            metrics = data.metrics
+            data = data.samples
             # flatten the data if it is a list of lists
             while isinstance(data[0], list):
                 data = sum(data, [])
@@ -130,7 +141,7 @@ class RolloutManager:
                 origin_data_length = len(data)
                 data = data[:trim_len]
                 print(f"trim number of samples from {origin_data_length} to {trim_len}")
-        return data
+        return data, metrics
 
     def _save_debug_rollout_data(self, data, rollout_id):
         # TODO to be refactored (originally Buffer._set_data)
@@ -258,7 +269,9 @@ def init_rollout_engines(args, pg, all_rollout_engines):
                 "env_vars": {name: "1" for name in NOSET_VISIBLE_DEVICES_ENV_VARS_LIST}
                 | {
                     "SGL_JIT_DEEPGEMM_PRECOMPILE": "false",
+                    "SGLANG_JIT_DEEPGEMM_PRECOMPILE": "false",
                     "SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK": "true",
+                    "SGLANG_DISABLE_TP_MEMORY_INBALANCE_CHECK": "true",
                 }
             },
         ).remote(args, rank=i)
@@ -373,7 +386,8 @@ def _start_router(args):
         return
 
     args.sglang_router_ip = get_host_info()[1]
-    args.sglang_router_port = find_available_port(random.randint(3000, 4000))
+    if args.sglang_router_port is None:
+        args.sglang_router_port = find_available_port(random.randint(3000, 4000))
 
     if args.use_slime_router:
         from slime.router.router import run_router
@@ -384,9 +398,6 @@ def _start_router(args):
         from sglang_router.launch_router import RouterArgs
 
         from slime.utils.http_utils import run_router
-
-        args.sglang_router_ip = get_host_info()[1]
-        args.sglang_router_port = find_available_port(random.randint(3000, 4000))
 
         router_args = RouterArgs(
             host=args.sglang_router_ip,
@@ -442,11 +453,11 @@ def _log_eval_rollout_data(rollout_id, args, data):
     return log_dict
 
 
-def _log_rollout_data(rollout_id, args, samples, rollout_time):
+def _log_rollout_data(rollout_id, args, samples, rollout_extra_metrics, rollout_time):
     if args.load_debug_rollout_data:
         return
 
-    log_dict = {}
+    log_dict = {**(rollout_extra_metrics or {})}
     response_lengths = [
         sum(sample.loss_mask) if sample.loss_mask is not None else sample.response_length for sample in samples
     ]
@@ -454,6 +465,7 @@ def _log_rollout_data(rollout_id, args, samples, rollout_time):
     if args.rollout_num_gpus is not None:
         log_dict["perf/tokens_per_gpu_per_sec"] = sum(response_lengths) / rollout_time / args.rollout_num_gpus
     log_dict["perf/longest_sample_tokens_per_sec"] = max(response_lengths) / rollout_time
+    log_dict |= _compute_zero_std_metrics(args, samples)
     print(f"perf {rollout_id}: {log_dict}")
     step = (
         rollout_id
@@ -469,3 +481,20 @@ def _log_rollout_data(rollout_id, args, samples, rollout_time):
 
         tb = _TensorboardAdapter(args)
         tb.log(data=log_dict, step=step)
+
+
+def _compute_zero_std_metrics(args, all_samples: List[Sample]):
+    # only compute in GRPO-like algorithms where one prompt has multiple responses
+    if args.advantage_estimator == "ppo":
+        return {}
+
+    def _is_zero_std(samples: List[Sample]):
+        rewards = [sample.get_reward_value(args) for sample in samples]
+        return len(rewards) == 0 or all(rewards[0] == r for r in rewards)
+
+    all_sample_groups = group_by(all_samples, lambda s: s.group_index)
+    interesting_sample_groups = [g for g in all_sample_groups.values() if _is_zero_std(g)]
+
+    interesting_rewards = [str(round(g[0].get_reward_value(args), 1)) for g in interesting_sample_groups]
+
+    return {f"rollout/zero_std/count_{reward}": len(items) for reward, items in group_by(interesting_rewards).items()}
