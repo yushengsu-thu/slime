@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import random
 import re
 
@@ -20,6 +21,9 @@ logger = logging.getLogger(__name__)
 # TODO: don't read the whole file into memory.
 def read_file(path):
     path, row_slice = _parse_generalized_path(path)
+
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Prompt dataset path '{path}' does not exist.")
 
     if path.endswith(".jsonl"):
         df = pd.read_json(path, lines=True, dtype={"label": str})

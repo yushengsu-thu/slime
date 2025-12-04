@@ -1339,7 +1339,7 @@ def _resolve_eval_datasets(args) -> list[EvalDatasetConfig]:
     else:
         datasets_config = []
 
-    eval_datasets = build_eval_dataset_configs(datasets_config, defaults)
+    eval_datasets = build_eval_dataset_configs(args, datasets_config, defaults)
     if eval_datasets:
         args.eval_prompt_data = [item for dataset in eval_datasets for item in (dataset.name, dataset.path)]
     else:

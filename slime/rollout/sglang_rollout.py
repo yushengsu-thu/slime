@@ -477,93 +477,40 @@ async def eval_rollout_single_dataset(
 
     global EVAL_PROMPT_DATASET
 
-    name = dataset_cfg.name
-    path = dataset_cfg.path
-
-    def _resolve_dataset_setting(dataset_value, eval_value, rollout_value):
-        if dataset_value is not None:
-            return dataset_value
-        if eval_value is not None:
-            return eval_value
-        return rollout_value
-
-    prompt_key = _resolve_dataset_setting(
-        dataset_cfg.prompt_key,
-        args.eval_input_key,
-        args.input_key,
-    )
-    label_key = _resolve_dataset_setting(
-        dataset_cfg.label_key,
-        args.eval_label_key,
-        args.label_key,
-    )
-    tool_key = _resolve_dataset_setting(
-        dataset_cfg.tool_key,
-        args.eval_tool_key,
-        args.tool_key,
-    )
-    metadata_key = dataset_cfg.metadata_key or getattr(args, "metadata_key", "metadata")
-
     cache_key = dataset_cfg.cache_key + (args.hf_checkpoint, args.apply_chat_template)
     if cache_key not in EVAL_PROMPT_DATASET:
         tokenizer = AutoTokenizer.from_pretrained(args.hf_checkpoint, trust_remote_code=True)
         EVAL_PROMPT_DATASET[cache_key] = Dataset(
-            path,
+            path=dataset_cfg.path,
             tokenizer=tokenizer,
             max_length=args.eval_max_prompt_len,
-            prompt_key=prompt_key,
-            label_key=label_key,
+            prompt_key=dataset_cfg.input_key,
+            label_key=dataset_cfg.label_key,
             multimodal_keys=args.multimodal_keys,
-            metadata_key=metadata_key,
-            tool_key=tool_key,
+            metadata_key=dataset_cfg.metadata_key,
+            tool_key=dataset_cfg.tool_key,
             apply_chat_template=args.apply_chat_template,
             apply_chat_template_kwargs=args.apply_chat_template_kwargs,
         )
     dataset = EVAL_PROMPT_DATASET[cache_key]
 
     base_sampling_params = dict(
-        temperature=_resolve_dataset_setting(dataset_cfg.temperature, args.eval_temperature, args.rollout_temperature),
-        top_p=_resolve_dataset_setting(
-            dataset_cfg.top_p,
-            args.eval_top_p,
-            args.rollout_top_p,
-        ),
-        top_k=_resolve_dataset_setting(
-            dataset_cfg.top_k,
-            args.eval_top_k,
-            args.rollout_top_k,
-        ),
-        max_new_tokens=_resolve_dataset_setting(
-            dataset_cfg.max_response_len,
-            args.eval_max_response_len,
-            args.rollout_max_response_len,
-        ),
-        stop=dataset_cfg.stop if dataset_cfg.stop is not None else args.rollout_stop,
-        stop_token_ids=(
-            dataset_cfg.stop_token_ids if dataset_cfg.stop_token_ids is not None else args.rollout_stop_token_ids
-        ),
+        temperature=dataset_cfg.temperature,
+        top_p=dataset_cfg.top_p,
+        top_k=dataset_cfg.top_k,
+        max_new_tokens=dataset_cfg.max_response_len,
+        stop=args.rollout_stop,
+        stop_token_ids=args.rollout_stop_token_ids,
         skip_special_tokens=args.rollout_skip_special_tokens,
         no_stop_trim=True,
         spaces_between_special_tokens=False,
-    )
-
-    min_new_tokens = dataset_cfg.min_new_tokens
-    if min_new_tokens is None:
-        min_new_tokens = getattr(args, "eval_min_new_tokens", None)
-    if min_new_tokens is not None:
-        base_sampling_params["min_new_tokens"] = min_new_tokens
-
-    n_samples_per_prompt = (
-        dataset_cfg.n_samples_per_eval_prompt
-        if dataset_cfg.n_samples_per_eval_prompt is not None
-        else args.n_samples_per_eval_prompt
     )
 
     tasks = []
     # do multiple samples for eval prompts
     sample_index = 0
     for _i, prompt_sample in enumerate(dataset.samples):
-        for j in range(n_samples_per_prompt):
+        for j in range(dataset_cfg.n_samples_per_eval_prompt):
             # use the same prompt for multiple samples
             sample = copy.deepcopy(prompt_sample)
             sample.index = sample_index
@@ -605,7 +552,7 @@ async def eval_rollout_single_dataset(
 
     reward_key = args.eval_reward_key or args.reward_key
     return {
-        name: {
+        dataset_cfg.name: {
             "rewards": [sample.reward if not reward_key else sample.reward[reward_key] for sample in data],
             "truncated": [sample.status == Sample.Status.TRUNCATED for sample in data],
             "samples": data,
