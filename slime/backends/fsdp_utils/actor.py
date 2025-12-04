@@ -1,7 +1,7 @@
 import logging
+import os
 from argparse import Namespace
 from itertools import accumulate
-
 
 import ray
 import torch
@@ -9,7 +9,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from ring_flash_attn import substitute_hf_flash_attn, update_ring_flash_attn_params
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+from transformers import AutoConfig
 
 from slime.ray.train_actor import TrainRayActor
 from slime.utils import train_dump_utils, train_metric_utils
@@ -19,6 +19,7 @@ from slime.utils.distributed_utils import get_gloo_group
 from slime.utils.memory_utils import clear_memory, print_memory
 from slime.utils.metric_utils import compute_rollout_step
 from slime.utils.ppo_utils import compute_approx_kl, compute_gspo_kl, compute_opsm_mask, compute_policy_loss
+from slime.utils.processing_utils import load_processor, load_tokenizer
 from slime.utils.ray_utils import Box
 from slime.utils.timer import Timer, inverse_timer, timer
 from slime.utils.tracking_utils import init_tracking
@@ -73,16 +74,15 @@ class FSDPTrainRayActor(TrainRayActor):
         for i in range(dist.get_world_size()):
             if i == dist.get_rank():
                 self.hf_config = AutoConfig.from_pretrained(self.args.hf_checkpoint, trust_remote_code=True)
-                self.tokenizer = AutoTokenizer.from_pretrained(self.args.hf_checkpoint, trust_remote_code=True)
+                self.tokenizer = load_tokenizer(self.args.hf_checkpoint, trust_remote_code=True)
+                if self.args.multimodal_keys:
+                    self.processor = load_processor(self.args.hf_checkpoint, trust_remote_code=True)
             dist.barrier(group=get_gloo_group())
-
-        if self.args.multimodal_keys:
-            self.vlm_processor = AutoProcessor.from_pretrained(self.args.hf_checkpoint, trust_remote_code=True)
 
         init_context = self._get_init_weight_context_manager()
 
         with init_context():
-            model = AutoModelForCausalLM.from_pretrained(
+            model = self.get_model_cls().from_pretrained(
                 self.args.hf_checkpoint,
                 trust_remote_code=True,
                 attn_implementation=self.args.attn_implementation,
@@ -141,6 +141,16 @@ class FSDPTrainRayActor(TrainRayActor):
         self.prof.on_init_end()
 
         return int(getattr(self.args, "start_rollout_id", 0))
+
+    def get_model_cls(self):
+        if self.args.multimodal_keys:
+            from transformers import AutoModelForVision2Seq
+
+            return AutoModelForVision2Seq
+        else:
+            from transformers import AutoModelForCausalLM
+
+            return AutoModelForCausalLM
 
     def _enable_true_on_policy_optimizations(self, args):
         if args.true_on_policy_mode:
@@ -347,8 +357,6 @@ class FSDPTrainRayActor(TrainRayActor):
                     tqdm(packed_batches, desc=f"{store_prefix}log_probs", disable=dist.get_rank() != 0)
                 ):
                     model_args = self._get_model_inputs_args(batch)
-                    if "pixel_values" in batch:
-                        model_args["pixel_values"] = batch["pixel_values"]
                     logits = active_model(**model_args).logits.squeeze(0).float()
                     log_probs_result, entropy_result = get_logprob_and_entropy_with_cp(
                         logits=logits,
@@ -435,6 +443,9 @@ class FSDPTrainRayActor(TrainRayActor):
                     rollout_data["returns"][start:end],
                     rollout_log_probs=(
                         rollout_data["rollout_log_probs"][start:end] if "rollout_log_probs" in rollout_data else None
+                    ),
+                    multimodal_inputs=(
+                        rollout_data["multimodal_inputs"][start:end] if "multimodal_inputs" in rollout_data else None
                     ),
                     num_packs=mbs_size,
                 )
@@ -783,15 +794,13 @@ class FSDPTrainRayActor(TrainRayActor):
         if ref_load_path is None:
             raise ValueError("ref_load_path must be provided when loading reference model")
 
-        import os
-
         if os.path.isdir(ref_load_path):
             logger.info(f"[Rank {dist.get_rank()}] Creating separate ref model from {ref_load_path}")
 
             init_context = self._get_init_weight_context_manager()
 
             with init_context():
-                ref_model = AutoModelForCausalLM.from_pretrained(
+                ref_model = self.get_model_cls().from_pretrained(
                     ref_load_path,
                     trust_remote_code=True,
                     attn_implementation=self.args.attn_implementation,
@@ -828,6 +837,8 @@ class FSDPTrainRayActor(TrainRayActor):
             "position_ids": position_ids,
             "attention_mask": None,
         }
+        if packed_sequence.get("multimodal_inputs"):
+            model_args.update(packed_sequence["multimodal_inputs"])
         return model_args
 
 

@@ -1,7 +1,5 @@
 import asyncio
-import base64
 import copy
-import io
 import logging
 from argparse import Namespace
 from collections import defaultdict
@@ -11,9 +9,7 @@ from typing import Any
 import numpy as np
 import sglang_router
 from packaging.version import parse
-from PIL import Image
 from tqdm import tqdm
-from transformers import AutoTokenizer
 
 from slime.rollout.base_types import RolloutFnEvalOutput, RolloutFnTrainOutput
 from slime.rollout.filter_hub.base_types import DynamicFilterOutput
@@ -23,6 +19,12 @@ from slime.utils.eval_config import EvalDatasetConfig
 from slime.utils.http_utils import get, post
 from slime.utils.mask_utils import get_response_lengths
 from slime.utils.misc import SingletonMeta, load_function
+from slime.utils.processing_utils import (
+    encode_image_for_rollout_engine,
+    load_processor,
+    load_tokenizer,
+    prepare_model_inputs,
+)
 from slime.utils.types import Sample
 
 from .rm_hub import async_rm, batched_async_rm
@@ -32,25 +34,17 @@ __all__ = ["generate_rollout"]
 logger = logging.getLogger(__name__)
 
 
-def _load_and_encode_image(path: str) -> str:
-    """Load an image from path, ensure RGB, encode as JPEG base64 string."""
-    with Image.open(path) as image:
-        buffer = io.BytesIO()
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        image.save(buffer, format="JPEG")
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-
 class GenerateState(metaclass=SingletonMeta):
     """
     The global state for the generation process.
     """
 
     def __init__(self, args: Namespace) -> None:
-        # persistant state for the generation process
+        # persistent state for the generation process
         self.args = args
-        self.tokenizer = AutoTokenizer.from_pretrained(args.hf_checkpoint, trust_remote_code=True)
+        self.tokenizer = load_tokenizer(args.hf_checkpoint, trust_remote_code=True)
+        self.processor = load_processor(args.hf_checkpoint, trust_remote_code=True)
+
         self.semaphore = asyncio.Semaphore(
             args.sglang_server_concurrency * args.rollout_num_gpus // args.rollout_num_gpus_per_engine
         )
@@ -102,31 +96,20 @@ async def generate(args: Namespace, sample: Sample, sampling_params: dict[str, A
         sample.status == Sample.Status.PENDING or sample.status == Sample.Status.ABORTED
     ), f"Sample status is {sample.status}"
 
-    # Process prompt to create text and image payload
-    image_data = []
-    if isinstance(sample.prompt, str):
-        text_prompt = sample.prompt
-    else:  # Multimodal prompt (list of dicts)
-        text_prompt = ""
-        # sglang uses a placeholder to insert image features
-        image_token = state.tokenizer.special_tokens_map.get("image_token", "<image>")
-        for part in sample.prompt:
-            if part["type"] == "text":
-                text_prompt += part["text"]
-            elif part["type"] == "image":
-                text_prompt += image_token
-                try:
-                    img_b64 = await asyncio.to_thread(_load_and_encode_image, part["path"])
-                    image_data.append(img_b64)
-                except Exception as e:
-                    logger.info(f"Error processing image {part['path']}: {e}")
-                    sample.status = Sample.Status.ABORTED
-                    return sample
+    prompt_ids, extra_info = prepare_model_inputs(
+        sample.prompt,
+        state.tokenizer,
+        state.processor,
+        sample.metadata,
+        args.apply_chat_template_kwargs,
+    )
+
+    image_data = extra_info.get("images", [])
+    video_data = extra_info.get("videos", [])
+    multimodal_inputs = extra_info.get("multimodal_inputs", None)
 
     if len(sample.response) > 0:
-        # Adjust max_new_tokens for subsequent generation turns
-        prompt_len = len(state.tokenizer(text_prompt, add_special_tokens=False)["input_ids"])
-        sampling_params["max_new_tokens"] -= len(sample.tokens) - prompt_len
+        sampling_params["max_new_tokens"] -= len(sample.tokens) - len(prompt_ids)
 
     assert (
         sampling_params["max_new_tokens"] >= 0
@@ -145,16 +128,19 @@ async def generate(args: Namespace, sample: Sample, sampling_params: dict[str, A
         payload["return_routed_experts"] = True
 
     if image_data:
-        payload["image_data"] = image_data
+        payload["image_data"] = [encode_image_for_rollout_engine(image) for image in image_data]
+        sample.multimodal_inputs = multimodal_inputs
+
+    if video_data:
+        raise NotImplementedError("Video data is not supported yet")
 
     # Use existing tokens for multi-turn or tokenize the new prompt
     if len(sample.response) > 0:
         payload["input_ids"] = sample.tokens
     else:
-        prompt_token_ids = state.tokenizer(text_prompt, add_special_tokens=False)["input_ids"]
-        payload["input_ids"] = prompt_token_ids
+        payload["input_ids"] = prompt_ids
         if not sample.tokens:  # Initialize sample.tokens for the first turn
-            sample.tokens = prompt_token_ids
+            sample.tokens = prompt_ids
 
     output = await post(url, payload)
 
@@ -479,10 +465,12 @@ async def eval_rollout_single_dataset(
 
     cache_key = dataset_cfg.cache_key + (args.hf_checkpoint, args.apply_chat_template)
     if cache_key not in EVAL_PROMPT_DATASET:
-        tokenizer = AutoTokenizer.from_pretrained(args.hf_checkpoint, trust_remote_code=True)
+        tokenizer = load_tokenizer(args.hf_checkpoint, trust_remote_code=True)
+        processor = load_processor(args.hf_checkpoint, trust_remote_code=True)
         EVAL_PROMPT_DATASET[cache_key] = Dataset(
             path=dataset_cfg.path,
             tokenizer=tokenizer,
+            processor=processor,
             max_length=args.eval_max_prompt_len,
             prompt_key=dataset_cfg.input_key,
             label_key=dataset_cfg.label_key,
