@@ -332,8 +332,8 @@ Parameters that FSDP used are shown as below in comparison to Megatron, more sup
 | **Context Parallel**      | `--context-parallel-size`                                    | `--context-parallel-size`                              | Both support CP                                              |
 | **Initial Learning Rate** | `--lr`                                                       | `--lr`                                                 | Same parameter                                               |
 | **Learning Rate Decay**   | `--lr-decay-style` (linear/cosine)                           | `--lr-decay-style` (only constant)                     |                                                              |
-| **Warmup**                | `--lr-warmup-iters` (steps)                                  | Coming Soon                                            |                                                              |
-| **Min Learning Rate**     | `--min-lr`                                                   | Coming Soon                                            |                                                              |
+| **Warmup**                | `--lr-warmup-iters` (steps)                                  | `--lr-warmup-iters`                   | Same parameter |
+| **Min Learning Rate**     | `--min-lr`                                                   | `--min-lr`                                  | Same parameter |
 | **Optimizer Type**        | `--optimizer` (adam/sgd etc.)                                | `--optimizer` (default adam)                           | Basically same                                               |
 | **Distributed Optimizer** | `--use-distributed-optimizer`                                | Built-in to FSDP                                       | FSDP uses distributed optimizer by default                   |
 | **Gradient Checkpoint**   | `--recompute-granularity`, `--recompute-method`              | `--gradient-checkpointing`                             | **FSDP**: Simplified to boolean switch                       |
@@ -341,7 +341,6 @@ Parameters that FSDP used are shown as below in comparison to Megatron, more sup
 | **CPU Backend**           | Implemented via distributed optimizer | `--fsdp-cpu-backend`                                   | **FSDP**: Specify CPU backend and use hybrid backend when CPU offload is enabled |
 | **Attention Backend**     | Decided by Megatron Core                                     | `--attn-implementation` (flash_attention_2/sdpa/eager) | **FSDP**: Directly passed to HuggingFace                     |
 | **Mixed Precision**       | `--fp16` or `--bf16`                                         | `--fp16` (bf16 inferred automatically)                 | Basically same                                               |
-| **Offload on Save**       |                                                              | `--fsdp-state-dict-cpu-offload` (Default True)         | **FSDP**: Offload to CPU when saving checkpoint              |
 | **Training Backend**      | Default or `--train-backend megatron`                        | `--train-backend fsdp` (Required)                      | Used to switch backend                                       |
 | **Config**      |                         | `--config`                     | **FSDP**: Set additional parameters for FSDP backend |
 
