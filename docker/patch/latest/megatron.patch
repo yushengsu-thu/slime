@@ -219,14 +219,14 @@ index 6aec66e6d..6ca48b55f 100644
                  mtp_loss = loss_mask * mtp_loss
                  if self.training:
 diff --git a/megatron/core/optimizer/distrib_optimizer.py b/megatron/core/optimizer/distrib_optimizer.py
-index a36b67364..8739270f2 100644
+index a36b67364..ed8883e32 100644
 --- a/megatron/core/optimizer/distrib_optimizer.py
 +++ b/megatron/core/optimizer/distrib_optimizer.py
 @@ -657,6 +657,8 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
                  # TE FusedAdam will not accumulate step for empty param groups, so we need to
                  # align the step across param groups.
                  param_group["step"] = int(step)
-+            if param_group["step"] is None:
++            if "step" in param_group and param_group["step"] is None:
 +                del param_group["step"]
  
          # Grad scaler state.
