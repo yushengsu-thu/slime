@@ -117,13 +117,6 @@ python tools/convert_torch_dist_to_hf.py \
   --origin-hf-dir /root/GLM-Z1-9B-0414
 ```
 
-本地想要快速验证（无需 Megatron）可以直接运行：
-
-```bash
-python tools/repro_issue_1094.py
-python tools/verify_fsdp_conversion.py
-```
-
 ## 训练脚本与参数概览
 
 完成上述准备工作后，即可运行训练脚本。

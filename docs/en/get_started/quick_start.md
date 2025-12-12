@@ -117,14 +117,6 @@ python tools/convert_torch_dist_to_hf.py \
   --origin-hf-dir /root/GLM-Z1-9B-0414
 ```
 
-You can smoke test this path locally without Megatron by running:
-
-```bash
-python tools/repro_issue_1094.py
-python tools/verify_fsdp_conversion.py
-```
-
-
 ## Training Script and Parameter Overview
 
 After completing the above preparation work, you can run the training script.
