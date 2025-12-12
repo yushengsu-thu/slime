@@ -1,7 +1,7 @@
 import argparse
 import json
-import pickle
 import os
+import pickle
 import re
 import shutil
 import time
@@ -12,6 +12,8 @@ import torch
 import torch.distributed.checkpoint as dist_cp
 from transformers import AutoConfig
 from typing_extensions import override
+
+from slime.backends.megatron_utils.megatron_to_hf import convert_to_hf, remove_padding
 
 
 class UnpicklerWrapper(pickle.Unpickler):
@@ -34,7 +36,7 @@ class WrappedStorageReader(dist_cp.FileSystemReader):
     def read_metadata(self):
         path = self.fs.concat_path(self.path, ".metadata")
         with self.fs.create_stream(path, "rb") as metadata_file:
-            metadata = pickle.Unpickler(metadata_file).load()
+            metadata = UnpicklerWrapper(metadata_file).load()
         if getattr(metadata, "storage_meta", None) is None:
             metadata.storage_meta = dist_cp.StorageMeta()
         metadata.storage_meta.load_id = self.load_id
@@ -102,8 +104,6 @@ def get_named_params(args, state_dict):
 
 
 def save_tensors(args, model_name, state_dict, output_dir, chunk_size, vocab_size=None):
-    from slime.backends.megatron_utils.megatron_to_hf import convert_to_hf, remove_padding
-
     # for slime update_weight compatible
     args.sglang_enable_ep_moe = False
 
@@ -158,11 +158,6 @@ def copy_assets(origin_hf_dir, output_dir):
         shutil.copy(src, dst)
 
 
-def _detect_model_dir(input_dir: str) -> str:
-    model_dir = os.path.join(input_dir, "model")
-    return model_dir if os.path.isdir(model_dir) else input_dir
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", type=str, default=None)
@@ -194,37 +189,28 @@ if __name__ == "__main__":
     if os.path.exists(args.output_dir) and not args.force:
         raise ValueError(f"Output directory {args.output_dir} already exists. Use --force to overwrite it.")
 
-    model_dir = _detect_model_dir(args.input_dir)
-    common_path = os.path.join(model_dir, "common.pt")
-
-    # Megatron (torch dist) checkpoint
-    if os.path.exists(common_path):
-        if args.model_name is None and args.origin_hf_dir is None:
-            raise ValueError(
-                "Either --model-name or --origin-hf-dir must be provided, so that we can know the name of the params."
-            )
-
-        if args.model_name is None:
-            hf_config = AutoConfig.from_pretrained(args.origin_hf_dir, trust_remote_code=True)
-            args.model_name = type(hf_config).__name__.lower()
-
-        state_dict = {}
-        print(f"loading model from {model_dir}")
-        t = time.time()
-        megatron_args = torch.load(common_path, weights_only=False)["args"]
-        dist_cp.state_dict_loader._load_state_dict(
-            state_dict,
-            storage_reader=WrappedStorageReader(model_dir),
-            planner=EmptyStateDictLoadPlanner(),
-            no_dist=True,
-        )
-        print(f"model loaded in {time.time()-t:.2f} sec.")
-
-        save_tensors(megatron_args, args.model_name, state_dict, args.output_dir, args.chunk_size, args.vocab_size)
-
-        if args.origin_hf_dir:
-            copy_assets(args.origin_hf_dir, args.output_dir)
-    else:
+    if args.model_name is None and args.origin_hf_dir is None:
         raise ValueError(
-            "common.pt not found. For FSDP checkpoints please run tools/convert_fsdp_to_hf.py instead."
+            "Either --model-name or --origin-hf-dir must be provided, so that we can know the name of the params."
         )
+
+    if args.model_name is None:
+        hf_config = AutoConfig.from_pretrained(args.origin_hf_dir, trust_remote_code=True)
+        args.model_name = type(hf_config).__name__.lower()
+
+    state_dict = {}
+    print(f"loading model from {args.input_dir}")
+    t = time.time()
+    megatron_args = torch.load(os.path.join(args.input_dir, "common.pt"), weights_only=False)["args"]
+    dist_cp.state_dict_loader._load_state_dict(
+        state_dict,
+        storage_reader=WrappedStorageReader(args.input_dir),
+        planner=EmptyStateDictLoadPlanner(),
+        no_dist=True,
+    )
+    print(f"model loaded in {time.time()-t:.2f} sec.")
+
+    save_tensors(megatron_args, args.model_name, state_dict, args.output_dir, args.chunk_size, args.vocab_size)
+
+    if args.origin_hf_dir:
+        copy_assets(args.origin_hf_dir, args.output_dir)
