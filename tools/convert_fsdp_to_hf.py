@@ -22,15 +22,12 @@ class UnpicklerWrapper(pickle.Unpickler):
         return super().find_class(mod_name, name)
 
 
-pickle.Unpickler = UnpicklerWrapper
-
-
 class WrappedStorageReader(dist_cp.FileSystemReader):
     @override
     def read_metadata(self):
         path = self.fs.concat_path(self.path, ".metadata")
         with self.fs.create_stream(path, "rb") as metadata_file:
-            metadata = pickle.Unpickler(metadata_file).load()
+            metadata = UnpicklerWrapper(metadata_file).load()
         if getattr(metadata, "storage_meta", None) is None:
             metadata.storage_meta = dist_cp.StorageMeta()
         metadata.storage_meta.load_id = self.load_id
