@@ -1,7 +1,7 @@
 import argparse
 import json
-import os
 import pickle
+import os
 import re
 import shutil
 import time
@@ -10,7 +10,7 @@ import time
 import safetensors.torch
 import torch
 import torch.distributed.checkpoint as dist_cp
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoConfig
 from typing_extensions import override
 
 
@@ -34,7 +34,7 @@ class WrappedStorageReader(dist_cp.FileSystemReader):
     def read_metadata(self):
         path = self.fs.concat_path(self.path, ".metadata")
         with self.fs.create_stream(path, "rb") as metadata_file:
-            metadata = UnpicklerWrapper(metadata_file).load()
+            metadata = pickle.Unpickler(metadata_file).load()
         if getattr(metadata, "storage_meta", None) is None:
             metadata.storage_meta = dist_cp.StorageMeta()
         metadata.storage_meta.load_id = self.load_id
@@ -163,45 +163,6 @@ def _detect_model_dir(input_dir: str) -> str:
     return model_dir if os.path.isdir(model_dir) else input_dir
 
 
-def _load_fsdp_state_dict(input_dir: str) -> dict[str, torch.Tensor]:
-    state_dict: dict[str, torch.Tensor] = {}
-    dist_cp.state_dict_loader._load_state_dict(
-        state_dict,
-        storage_reader=WrappedStorageReader(input_dir),
-        planner=EmptyStateDictLoadPlanner(),
-        no_dist=True,
-    )
-    return state_dict
-
-
-def _convert_fsdp_to_hf(origin_hf_dir: str, input_dir: str, output_dir: str) -> None:
-    print(f"loading FSDP model from {input_dir}")
-    t = time.time()
-    state_dict = _load_fsdp_state_dict(input_dir)
-    print(f"FSDP model loaded in {time.time()-t:.2f} sec.")
-
-    model_state = {
-        k.replace("model_state.model.", "", 1).replace("model.", "", 1): v
-        for k, v in state_dict.items()
-        if isinstance(v, torch.Tensor) and (k.startswith("model_state.model.") or k.startswith("model."))
-    }
-
-    if not model_state:
-        raise ValueError(
-            "No model weights found in checkpoint. "
-            "Please pass the checkpoint directory (e.g. iter_xxx or iter_xxx/model)."
-        )
-
-    config = AutoConfig.from_pretrained(origin_hf_dir, trust_remote_code=True)
-    hf_model = AutoModelForCausalLM.from_config(config)
-    missing, unexpected = hf_model.load_state_dict(model_state, strict=False)
-    print(f"Missing keys: {missing}\nUnexpected keys: {unexpected}")
-
-    os.makedirs(output_dir, exist_ok=True)
-    hf_model.save_pretrained(output_dir, safe_serialization=True)
-    print(f"Model weights saved to {output_dir}")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", type=str, default=None)
@@ -264,7 +225,6 @@ if __name__ == "__main__":
         if args.origin_hf_dir:
             copy_assets(args.origin_hf_dir, args.output_dir)
     else:
-        if args.origin_hf_dir is None:
-            raise ValueError("--origin-hf-dir is required for FSDP checkpoints without common.pt")
-        _convert_fsdp_to_hf(args.origin_hf_dir, model_dir, args.output_dir)
-        copy_assets(args.origin_hf_dir, args.output_dir)
+        raise ValueError(
+            "common.pt not found. For FSDP checkpoints please run tools/convert_fsdp_to_hf.py instead."
+        )
