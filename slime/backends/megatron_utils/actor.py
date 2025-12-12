@@ -59,6 +59,11 @@ class MegatronTrainRayActor(TrainRayActor):
         if is_megatron_main_rank():
             init_tracking(args, primary=False)
 
+        if args.offload_train:
+            if (x := args.train_memory_margin_bytes) > 0:
+                logger.info(f"Set torch_memory_saver.memory_margin_bytes to {x}")
+                torch_memory_saver.memory_margin_bytes = x
+
         self.prof = TrainProfiler(args)
 
         # read config and tokenizer serialized to prevent concurrent writing bug.
