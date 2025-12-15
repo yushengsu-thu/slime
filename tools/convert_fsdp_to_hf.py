@@ -45,7 +45,7 @@ class EmptyStateDictLoadPlanner(dist_cp.default_planner.DefaultLoadPlanner):
         is_coordinator: bool = False,
     ) -> None:
         for k, v in metadata.state_dict_metadata.items():
-            if "optimizer" in k or "_state" in k:
+            if "optimizer" in k:
                 continue
             print(f"find {k} in torch_dist ckpt")
             if isinstance(v, dist_cp.metadata.TensorStorageMetadata):
