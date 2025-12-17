@@ -317,7 +317,7 @@ slime also support FSDP2 as the training backend, docs [here](https://lmsys.org/
 
 > FSDP automatically reads all architecture information via `AutoModelForCausalLM.from_pretrained()`, without manual specification. Megatron requires manual configuration of parameters to read model architecture information, or automatic inference via `--use-hf-config-for-megatron`. FSDP can read entirely from `config.json`, directly avoiding the weight format conversion step.
 
-To run fsdp as the training backend, pass `--train-backend fsdp` to enable.
+To run FSDP as the training backend, pass `--train-backend fsdp` to enable.
 
 ### Parameters
 
@@ -331,7 +331,7 @@ Parameters that FSDP used are shown as below in comparison to Megatron, more sup
 | **Expert Parallel**       | `--expert-model-parallel-size`                               | Coming Soon                                            |                                                              |
 | **Context Parallel**      | `--context-parallel-size`                                    | `--context-parallel-size`                              | Both support CP                                              |
 | **Initial Learning Rate** | `--lr`                                                       | `--lr`                                                 | Same parameter                                               |
-| **Learning Rate Decay**   | `--lr-decay-style` (linear/cosine)                           | `--lr-decay-style`                     | Same parameter |
+| **Learning Rate Decay**   | `--lr-decay-style` (linear/cosine etc.)                      | `--lr-decay-style`                     | Same parameter |
 | **Warmup**                | `--lr-warmup-iters` (steps)                                  | `--lr-warmup-iters`                   | Same parameter |
 | **Min Learning Rate**     | `--min-lr`                                                   | `--min-lr`                                  | Same parameter |
 | **Optimizer Type**        | `--optimizer` (adam/sgd etc.)                                | `--optimizer` (default adam)                           | Basically same                                               |
