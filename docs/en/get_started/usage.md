@@ -331,7 +331,7 @@ Parameters that FSDP used are shown as below in comparison to Megatron, more sup
 | **Expert Parallel**       | `--expert-model-parallel-size`                               | Coming Soon                                            |                                                              |
 | **Context Parallel**      | `--context-parallel-size`                                    | `--context-parallel-size`                              | Both support CP                                              |
 | **Initial Learning Rate** | `--lr`                                                       | `--lr`                                                 | Same parameter                                               |
-| **Learning Rate Decay**   | `--lr-decay-style` (linear/cosine)                           | `--lr-decay-style` (only constant)                     |                                                              |
+| **Learning Rate Decay**   | `--lr-decay-style` (linear/cosine)                           | `--lr-decay-style`                     | Same parameter |
 | **Warmup**                | `--lr-warmup-iters` (steps)                                  | `--lr-warmup-iters`                   | Same parameter |
 | **Min Learning Rate**     | `--min-lr`                                                   | `--min-lr`                                  | Same parameter |
 | **Optimizer Type**        | `--optimizer` (adam/sgd etc.)                                | `--optimizer` (default adam)                           | Basically same                                               |
