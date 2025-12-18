@@ -84,6 +84,7 @@ def _get_candidate_prefixes(keys: list[str]) -> list[str]:
         for prefix in predefined:
             if prefix and key.startswith(prefix):
                 detected.add(prefix)
+
     # Always keep empty string as a fall back option for exact match.
     detected.add("")
     # Preserve predefined order while keeping only detected prefixes.
@@ -108,8 +109,6 @@ def _convert_fsdp_to_hf(
     origin_hf_dir: str,
     input_dir: str,
     output_dir: str,
-    *,
-    prefix: str | None = None,
 ) -> None:
     print(f"loading FSDP model from {input_dir}")
     t = time.time()
@@ -124,18 +123,13 @@ def _convert_fsdp_to_hf(
     hf_model = AutoModelForCausalLM.from_config(config)
     target_keys = set(hf_model.state_dict().keys())
 
-    if prefix is None:
-        best_prefix, best_match = _strip_best_prefix(
-            list(tensor_items.keys()), target_keys
-        )
-        total_keys = len(tensor_items)
-        print(
-            f"Using prefix '{best_prefix}' for key mapping. "
-            f"Matched {best_match}/{total_keys} parameter keys."
-        )
-    else:
-        best_prefix = prefix
-        print(f"Using user provided prefix '{best_prefix}' for key mapping.")
+    best_prefix, best_match = _strip_best_prefix(list(tensor_items.keys()), target_keys)
+    total_keys = len(tensor_items)
+
+    print(
+        f"Using prefix '{best_prefix}' for key mapping. "
+        f"Matched {best_match}/{total_keys} parameter keys."
+    )
 
     model_state = {k.removeprefix(best_prefix): v for k, v in tensor_items.items()}
 
@@ -179,20 +173,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "-f", "--force", action="store_true", help="Force overwrite the output directory if it exists."
     )
-    parser.add_argument(
-        "--prefix",
-        type=str,
-        default=None,
-        help=(
-            "Optional checkpoint prefix to strip before loading (e.g. 'model_state.model.'). "
-            "If omitted, the script will pick the best match using the target Hugging Face model state dict."
-        ),
-    )
     args = parser.parse_args()
 
     if os.path.exists(args.output_dir) and not args.force:
         raise ValueError(f"Output directory {args.output_dir} already exists. Use --force to overwrite it.")
 
     model_dir = _detect_model_dir(args.input_dir)
-    _convert_fsdp_to_hf(args.origin_hf_dir, model_dir, args.output_dir, prefix=args.prefix)
+    _convert_fsdp_to_hf(args.origin_hf_dir, model_dir, args.output_dir)
     copy_assets(args.origin_hf_dir, args.output_dir)
