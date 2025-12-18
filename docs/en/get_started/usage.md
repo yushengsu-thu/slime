@@ -323,8 +323,8 @@ To run FSDP as the training backend, pass `--train-backend fsdp` to enable.
 
 Parameters that FSDP used are shown as below in comparison to Megatron, more supports are coming on the way.
 
-| Configuration Category    | Megatron Parameter                                           | FSDP Parameter                                         | Description                                                  |
-| ------------------------- | ------------------------------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------ |
+| Configuration Category | Megatron Parameter | FSDP Parameter | Description |
+| --- | --- | --- | --- |
 | **Model Loading**         | `--load` (Megatron checkpoint) + architecture args (`--num-layers`, `--hidden-size` etc.) or `--use-hf-config-for-megatron` | `--hf-checkpoint` (Required)                           | **FSDP**: Directly uses HuggingFace format, no weight conversion needed, architecture inferred via `AutoConfig` |
 | **Tensor Parallel**       | `--tensor-model-parallel-size`                               | Coming Soon                                            |                                                              |
 | **Pipeline Parallel**     | `--pipeline-model-parallel-size`                             | Coming Soon                                            |                                                              |
