@@ -115,9 +115,7 @@ def _convert_fsdp_to_hf(
     state_dict = _load_fsdp_state_dict(input_dir)
     print(f"FSDP model loaded in {time.time()-t:.2f} sec.")
 
-    tensor_items = {
-        k: v for k, v in state_dict.items() if isinstance(v, torch.Tensor)
-    }
+    tensor_items = {k: v for k, v in state_dict.items() if isinstance(v, torch.Tensor)}
 
     config = AutoConfig.from_pretrained(origin_hf_dir, trust_remote_code=True)
     hf_model = AutoModelForCausalLM.from_config(config)
@@ -126,10 +124,7 @@ def _convert_fsdp_to_hf(
     best_prefix, best_match = _strip_best_prefix(list(tensor_items.keys()), target_keys)
     total_keys = len(tensor_items)
 
-    print(
-        f"Using prefix '{best_prefix}' for key mapping. "
-        f"Matched {best_match}/{total_keys} parameter keys."
-    )
+    print(f"Using prefix '{best_prefix}' for key mapping. " f"Matched {best_match}/{total_keys} parameter keys.")
 
     model_state = {k.removeprefix(best_prefix): v for k, v in tensor_items.items()}
 
