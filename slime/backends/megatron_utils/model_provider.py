@@ -53,6 +53,11 @@ def get_model_provider_func(
     args: argparse.Namespace,
     role: Literal["actor", "critic"] = "actor",
 ):
+    if args.megatron_to_hf_mode == "bridge":
+        provider = args.bridge.to_megatron_provider(load_weights=False)
+        provider.finalize()
+        return provider.provide
+
     def model_provider(pre_process: bool = True, post_process: bool = True, vp_stage: int | None = None) -> GPTModel:
         """Builds the model.
 
