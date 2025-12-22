@@ -1581,6 +1581,9 @@ def slime_validate_args(args):
 
     if args.prefill_num_servers is not None:
         assert not args.use_fault_tolerance, "fault tolerance is not supported when prefill_num_servers is set."
+    assert not (
+        args.prefill_num_servers is not None and args.rollout_external
+    ), "prefill_num_servers cannot be set when rollout_external is set."
 
 
 def hf_validate_args(args, hf_config):
