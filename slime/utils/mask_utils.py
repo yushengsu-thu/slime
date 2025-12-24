@@ -125,7 +125,7 @@ class MultiTurnLossMaskGenerator:
             loss_mask = [0] * len(token_ids)
         return token_ids, loss_mask
 
-    def get_loss_mask(self, messages: list[dict], tools: list[dict] = None) -> list[int]:
+    def get_loss_mask(self, messages: list[dict], tools: list[dict] = None) -> tuple[list[int], list[int]]:
         if self.tokenizer_type == "qwen":
             if "<｜Assistant｜>" in self.tokenizer.get_added_vocab():
                 return self.gen_multi_turn_loss_mask_distill_qwen(messages, tools)
@@ -138,6 +138,36 @@ class MultiTurnLossMaskGenerator:
         else:
             raise ValueError(f"Unsupported tokenizer type: {self.tokenizer_type}")
 
+    def get_loss_mask_with_multimodal_alignment(
+        self, messages: list[dict], input_ids: list[int], tools: list[dict] = None
+    ) -> tuple[list[int], list[int]]:
+        text = []
+        for msg in messages:
+            if isinstance(msg.get("content"), list):
+                text_parts = []
+                for item in msg["content"]:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                text.append({
+                    "role": msg["role"],
+                    "content": " ".join(text_parts)
+                })
+            else:
+                text.append(msg)
+        
+        _, loss_mask_text = self.get_loss_mask(text, tools=tools)
+        
+        diff = len(input_ids) - len(loss_mask_text)
+        assert diff >= 0, (
+            f"input_ids (length={len(input_ids)}) is shorter than text loss_mask (length={len(loss_mask_text)}) "
+            f"Please check if processor and tokenizer tokenization are consistent."
+        )
+        loss_mask = [0] * diff + loss_mask_text
+        
+        return input_ids, loss_mask
+    
     def get_text_from_loss_mask(self, token_ids: list[int], loss_masks: list[int]) -> list[str]:
         selected_texts = []
         current_tokens = []
