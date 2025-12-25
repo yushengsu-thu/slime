@@ -425,6 +425,13 @@ def train_one_step(
             else:
                 valid_step = not (math.isnan(grad_norm) or math.isinf(grad_norm))
 
+    # CI check: verify only MTP parameters have non-zero gradients when truncation happens
+    # This check must happen before optimizer.step() as gradients may be modified during step
+    if args.ci_test and args.enable_mtp_training:
+        from slime.backends.megatron_utils.ci_utils import check_mtp_only_grad
+
+        check_mtp_only_grad(model, step_id)
+
     if valid_step:
         # Update parameters.
         update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
@@ -586,6 +593,12 @@ def train(
                 # here we assume only one mtp layer
                 mtp_losses = (tracker["values"] * mtp_loss_scale).item()
                 MTPLossLoggingHelper.clean_loss_in_tracker()
+
+                # CI check: verify MTP loss is within expected bounds
+                if args.ci_test:
+                    from slime.backends.megatron_utils.ci_utils import check_mtp_loss
+
+                    check_mtp_loss(mtp_losses)
 
         # per train step log.
         if (
