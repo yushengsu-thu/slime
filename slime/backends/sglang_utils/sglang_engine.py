@@ -497,4 +497,6 @@ _EXTERNAL_ENGINE_SKIP_CHECK_FIELDS = [
     "nccl_port",
     "dist_init_addr",
     "skip_server_warmup",
+    "enable_draft_weights_cpu_backup",
+    "mem_fraction_static",
 ]
